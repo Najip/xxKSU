@@ -35,11 +35,14 @@ class HomeViewModel(
 
     fun refresh() {
         viewModelScope.launch {
+            val prevLatest = _uiState.value.latestVersionInfo
             val baseState = withContext(Dispatchers.IO) { buildState() }
-            _uiState.update { baseState }
+            _uiState.update { baseState.copy(latestVersionInfo = prevLatest) }
             if (baseState.checkUpdateEnabled) {
                 val latestVersionInfo = withContext(Dispatchers.IO) { checkNewVersion() }
-                _uiState.update { it.copy(latestVersionInfo = latestVersionInfo) }
+                if (latestVersionInfo.versionCode > 0) {
+                    _uiState.update { it.copy(latestVersionInfo = latestVersionInfo) }
+                }
             }
         }
     }

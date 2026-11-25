@@ -112,6 +112,12 @@ pub fn claim_inherited_driver_fd() -> io::Result<()> {
     if DRIVER_FD.get().is_none()
         && let Some(fd) = scan_driver_fd()?
     {
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFD);
+            if flags >= 0 {
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            }
+        }
         let _ = DRIVER_FD.set(fd);
     }
     Ok(())

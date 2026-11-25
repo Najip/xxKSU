@@ -100,7 +100,8 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user 
 		pr_info("[%d] install ksu fd: %d\n", current->pid, fd);
 		if (copy_to_user((void __user *)arg4, &fd, sizeof(fd))) {
 			pr_err("install ksu fd reply err\n");
-			ksu_close_fd(fd);
+			if (fd >= 0)
+				ksu_close_fd(fd);
 		}
 
 		return 0;

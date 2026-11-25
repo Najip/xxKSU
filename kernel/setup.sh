@@ -47,7 +47,7 @@ setup_kernelsu() {
     fi
     git pull && echo "[+] Repository updated."
     if [ -z "${1-}" ]; then
-        git checkout "$(git describe --abbrev=0 --tags)" && echo "[-] Checked out latest tag."
+        git checkout "$(git describe --abbrev=0 --tags --match "v*")" && echo "[-] Checked out latest tag."
     else
         git checkout "$1" && echo "[-] Checked out $1." || echo "[-] Checkout default branch"
     fi
@@ -56,7 +56,9 @@ setup_kernelsu() {
 
     # Add entries in Makefile and Kconfig if not already existing
     grep -q "kernelsu" "$DRIVER_MAKEFILE" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_MAKEFILE" && echo "[+] Modified Makefile."
-    grep -q "source \"drivers/kernelsu/Kconfig\"" "$DRIVER_KCONFIG" || sed -i "/endmenu/i\source \"drivers/kernelsu/Kconfig\"" "$DRIVER_KCONFIG" && echo "[+] Modified Kconfig."
+    grep -q "source \"drivers/kernelsu/Kconfig\"" "$DRIVER_KCONFIG" || {
+        awk '{lines[NR]=$0; if ($0 ~ /endmenu/) last=NR} END {for (i=1;i<=NR;i++) {if (i==last) print "source \"drivers/kernelsu/Kconfig\""; print lines[i]}}' "$DRIVER_KCONFIG" > "${DRIVER_KCONFIG}.tmp" && mv "${DRIVER_KCONFIG}.tmp" "$DRIVER_KCONFIG"
+    } && echo "[+] Modified Kconfig."
     echo '[+] Done.'
 }
 

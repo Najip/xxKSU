@@ -393,8 +393,12 @@ static noinline uintptr_t kallsyms_lookup_retry_op(const char *name, int op)
 	if (addr)
 		goto found;
 
-	if (kallsyms_hash_array_ready)
-		addr = kallsyms_lookup_hashed_name(name);
+	if (kallsyms_hash_array_ready) {
+		mutex_lock(&kallsyms_hash_array_mutex);
+		if (kallsyms_hash_array_ready)
+			addr = kallsyms_lookup_hashed_name(name);
+		mutex_unlock(&kallsyms_hash_array_mutex);
+	}
 	if (addr)
 		goto found;		
 
@@ -411,9 +415,10 @@ static noinline uintptr_t kallsyms_lookup_retry_op(const char *name, int op)
 		kallsyms_hash_array_ready = true;
 		smp_mb();
 	}
+	addr = kallsyms_lookup_hashed_name(name);
 	mutex_unlock(&kallsyms_hash_array_mutex);
 
-	return kallsyms_lookup_hashed_name(name);
+	return addr;
 
 found:;
 	char namebuf[KSYM_NAME_LEN];
@@ -518,6 +523,9 @@ static void dotted_kallsyms_destroy_hash_array(void)
 	pr_info("%s: addr: 0x%lx entries: %u capacity: %u\n", __func__, (uintptr_t)kallsyms_hash_array, kallsyms_hash_array_entry_count, kallsyms_hash_array_capacity);
 
 	memzero_explicit(kallsyms_hash_array, kallsyms_hash_array_entry_count * sizeof(struct symbol_hash_entry));
+
+	kallsyms_hash_array_ready = false;
+	smp_mb();
 
 	kvfree(kallsyms_hash_array);
 

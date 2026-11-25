@@ -15,14 +15,26 @@ extra["androidTargetCompatibility"] = JavaVersion.VERSION_21
 extra["managerVersionCode"] = getVersionCode()
 extra["managerVersionName"] = getVersionName()
 
+fun runGit(vararg args: String): String {
+    val process = ProcessBuilder(listOf("git") + args)
+        .directory(rootDir)
+        .start()
+    val output = process.inputStream.bufferedReader().use { it.readText().trim() }
+    val exitCode = process.waitFor()
+    check(exitCode == 0) { "git ${args.joinToString(" ")} failed with exit code $exitCode" }
+    return output
+}
+
 fun getGitCommitCount(): Int {
-    val process = Runtime.getRuntime().exec(arrayOf("git", "rev-list", "--count", "HEAD"))
-    return process.inputStream.bufferedReader().use { it.readText().trim().toInt() }
+    val count = runGit("rev-list", "--count", "HEAD").toInt()
+    check(count >= 100) { "Shallow clone detected (commit count=$count); fetch full git history (fetch-depth: 0)." }
+    return count
 }
 
 fun getGitDescribe(): String {
-    val process = Runtime.getRuntime().exec(arrayOf("git", "describe", "--tags", "--always"))
-    return process.inputStream.bufferedReader().use { it.readText().trim() }
+    val desc = runGit("describe", "--tags", "--match", "v*", "--always")
+    check(desc.startsWith("v")) { "git describe returned '$desc' without v* tag; fetch tags (fetch-depth: 0)." }
+    return desc
 }
 
 fun getVersionCode(): Int {

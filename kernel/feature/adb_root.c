@@ -22,8 +22,11 @@ static inline long is_exec_adbd(const char __user **filename_user)
 static long is_libadbroot_ok()
 {
 	static const char kLibAdbRoot[] = "/data/adb/ksu/lib/libadbroot.so";
+	const struct cred *old_cred = ksu_cred ? override_creds(ksu_cred) : NULL;
 	struct path path;
 	long ret = kern_path(kLibAdbRoot, 0, &path);
+	if (old_cred)
+		revert_creds(old_cred);
 	if (ret < 0) {
 		if (ret == -ENOENT) {
 			pr_err("libadbroot.so not exists, skip adb root. Please run `ksud install`\n");
@@ -185,7 +188,7 @@ static noinline void do_ksu_adb_root_execve(void **restrict filename_kernel, con
 			return;
 	}
 
-	if (!is_libadbroot_ok())
+	if (is_libadbroot_ok() <= 0)
 		return;
 
 	if (setup_ld_preload(envp_in))

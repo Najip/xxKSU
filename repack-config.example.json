@@ -7,9 +7,9 @@
         "key_pass": ""
     },
     // APK build type to use, e.g. debug or release
-    "app_build_type": "",
+    "app_build_type": "debug",
     // ksud build type to use, e.g. debug or release
-    "ksud_build_type": "",
+    "ksud_build_type": "debug",
     // Native library architectures to keep in the APK
     "arch": [],
     // Base output APK filename (uses input APK stem if empty)

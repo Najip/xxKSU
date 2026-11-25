@@ -190,20 +190,20 @@ static void sh_security_compute_av_user(u32 ssid, u32 tsid, u16 tclass, struct a
 
 static void patch_branches_selinux_transaction_write(void)
 {
-	uintptr_t target_callsite = kallsyms_lookup_retry("selinux_transaction_write");
+	uintptr_t tx_callsite = kallsyms_lookup_retry("selinux_transaction_write");
 	uintptr_t symbol_addr = kallsyms_lookup_retry("simple_transaction_get");
-	if (!symbol_addr || !target_callsite)
+	if (!symbol_addr || !tx_callsite)
 		goto hook_classic;
 
 	uintptr_t trampoline = 0x0;
-	int ret = arm64_branch_patch_trampolined_reusable(&trampoline, target_callsite, symbol_addr, (uintptr_t)&sh_simple_transaction_get);
+	int ret = arm64_branch_patch_trampolined_reusable(&trampoline, tx_callsite, symbol_addr, (uintptr_t)&sh_simple_transaction_get);
 	pr_info("selinux_hide: hook_site: selinux_transaction_write->simple_transaction_get ret: %d \n", ret);
 	if (ret)
 		goto hook_classic;
 
 #if 0
 	symbol_addr = kallsyms_lookup_retry("simple_transaction_set");
-	ret = patch_arm64_branches_trampolined(target_callsite, symbol_addr, (uintptr_t)&sh_simple_transaction_set);
+	ret = patch_arm64_branches_trampolined(tx_callsite, symbol_addr, (uintptr_t)&sh_simple_transaction_set);
 	pr_info("selinux_hide: hook_site: selinux_transaction_write->simple_transaction_set ret: %d \n", ret);
 	if (!ret)
 		return;
@@ -234,22 +234,23 @@ static void patch_branches_selinux_transaction_write(void)
 	 * so if second hook fails, we just gc the first one and fallback to fnptr
 	 */
 #else
-	target_callsite = kallsyms_lookup_retry("sel_write_access");
+	uintptr_t access_callsite = kallsyms_lookup_retry("sel_write_access");
 	symbol_addr = kallsyms_lookup_retry("security_compute_av_user");
-	if (!symbol_addr || !target_callsite)
-		goto hook_classic;
+	if (!symbol_addr || !access_callsite)
+		goto unhook_tx;
 
-	ret = patch_arm64_branches_trampolined(target_callsite, symbol_addr, (uintptr_t)&sh_security_compute_av_user);
+	ret = patch_arm64_branches_trampolined(access_callsite, symbol_addr, (uintptr_t)&sh_security_compute_av_user);
 	pr_info("selinux_hide: hook_site: sel_write_access->security_compute_av_user ret: %d \n", ret);
 	if (!ret)
 		return;
 #endif
+unhook_tx:
 	symbol_addr = kallsyms_lookup_retry("simple_transaction_get");
 	assume(!!symbol_addr);
 	if (!!trampoline)
-		ret = arm64_b_or_bl_patch(target_callsite, ksu_get_ksym_size(target_callsite, 32 * 4), trampoline, symbol_addr);
+		ret = arm64_b_or_bl_patch(tx_callsite, ksu_get_ksym_size(tx_callsite, 32 * 4), trampoline, symbol_addr);
 	else
-		ret = arm64_b_or_bl_patch(target_callsite, ksu_get_ksym_size(target_callsite, 32 * 4), (uintptr_t)&sh_simple_transaction_get, symbol_addr);
+		ret = arm64_b_or_bl_patch(tx_callsite, ksu_get_ksym_size(tx_callsite, 32 * 4), (uintptr_t)&sh_simple_transaction_get, symbol_addr);
 	pr_info("selinux_hide: unhook_site: selinux_transaction_write->transaction_get ret: %d \n", ret);
 	if (ret) // uh oh, indeterminate state, just warn and limp on
 		pr_info("selinux_hide: unhook_site: selinux_transaction_write->transaction_get unhook failed! indeterminate state!\n");

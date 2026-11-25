@@ -70,11 +70,15 @@ def merge_config(file_cfg: dict, args: argparse.Namespace) -> dict:
     if args.key_pass:
         cfg["signing"]["key_pass"] = args.key_pass
 
+    cfg["app_build_type"] = cfg.get("app_build_type") or "debug"
+    cfg["ksud_build_type"] = cfg.get("ksud_build_type") or "debug"
     cfg["arch"] = normalize_arch_values(cfg.get("arch", []))
     return cfg
 
 
 def normalize_arch_values(values: Iterable[str]) -> List[str]:
+    if isinstance(values, str):
+        values = [values]
     out: List[str] = []
     seen = set()
     for item in values:
@@ -86,6 +90,12 @@ def normalize_arch_values(values: Iterable[str]) -> List[str]:
     return out
 
 
+def validate_single_segment(value: str, label: str) -> str:
+    if not value or value in (".", "..") or "/" in value or "\\" in value or Path(value).name != value:
+        raise ValueError(f"Invalid {label}: {value!r}")
+    return value
+
+
 def version_key(version: str) -> Tuple[int, ...]:
     nums = re.findall(r"\d+", version)
     return tuple(int(n) for n in nums) if nums else (0,)
@@ -93,7 +103,11 @@ def version_key(version: str) -> Tuple[int, ...]:
 
 def find_strip_tool() -> Optional[Path]:
     """Locate llvm-strip (preferred) or strip from the Android NDK toolchain."""
-    ndk_root = os.environ.get("ANDROID_NDK_HOME") or os.environ.get("ANDROID_NDK")
+    ndk_root = (
+        os.environ.get("ANDROID_NDK_HOME")
+        or os.environ.get("ANDROID_NDK_ROOT")
+        or os.environ.get("ANDROID_NDK")
+    )
     if not ndk_root:
         sdk_root = os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME")
         if sdk_root:
@@ -111,6 +125,8 @@ def find_strip_tool() -> Optional[Path]:
         toolchain_bin = Path(ndk_root) / "toolchains" / "llvm" / "prebuilt"
         if toolchain_bin.exists():
             for prebuilt in toolchain_bin.iterdir():
+                if not prebuilt.is_dir():
+                    continue
                 bin_dir = prebuilt / "bin"
                 for name in ("llvm-strip", "llvm-strip.exe", "strip", "strip.exe"):
                     candidate = bin_dir / name
@@ -157,14 +173,15 @@ def find_android_tool(tool_base_name: str) -> Optional[Path]:
     return candidates[0][1]
 
 
-def run_cmd(args: List[str], fail_msg: str) -> None:
-    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+def run_cmd(args: List[str], fail_msg: str, env: Optional[Dict[str, str]] = None) -> None:
+    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     if proc.returncode != 0:
         output = proc.stdout.strip()
         raise RuntimeError(f"{fail_msg}\nCommand: {' '.join(args)}\n{output}")
 
 
 def find_latest_apk(app_build_type: str) -> Path:
+    validate_single_segment(app_build_type, "app_build_type")
     pattern = workspace_root() / "manager" / "app" / "build" / "outputs" / "apk" / app_build_type
     apks = sorted(pattern.glob("*.apk"), key=lambda p: p.stat().st_mtime)
     if not apks:
@@ -184,13 +201,13 @@ ARCH_TO_TRIPLE = {
 
 
 def find_ksud_binaries_by_arch(ksud_build_type: str, arch_filters: List[str]) -> Dict[str, Path]:
+    validate_single_segment(ksud_build_type, "ksud_build_type")
     result: Dict[str, Path] = {}
     target_root = workspace_root() / "target"
     for arch in arch_filters:
         triple = ARCH_TO_TRIPLE.get(arch)
         if not triple:
-            print(f"[WARN] Unknown arch '{arch}', cannot map to target triple.", file=sys.stderr)
-            continue
+            raise ValueError(f"Unknown arch '{arch}', cannot map to target triple.")
         candidate = target_root / triple / ksud_build_type / "ksud"
         if candidate.exists():
             result[arch] = candidate
@@ -210,7 +227,7 @@ def collect_existing_arches(apk_path: Path) -> List[str]:
             if not name.startswith("lib/"):
                 continue
             parts = name.split("/")
-            if len(parts) >= 3 and parts[1] and parts[1] not in seen:
+            if len(parts) >= 3 and parts[1] in ARCH_TO_TRIPLE and parts[1] not in seen:
                 seen.add(parts[1])
                 arches.append(parts[1])
     return arches
@@ -224,7 +241,7 @@ def collect_existing_ksud_arches(apk_path: Path) -> List[str]:
             if not (name.startswith("lib/") and name.endswith("/libksud.so")):
                 continue
             parts = name.split("/")
-            if len(parts) >= 3 and parts[1] and parts[1] not in seen:
+            if len(parts) >= 3 and parts[1] in ARCH_TO_TRIPLE and parts[1] not in seen:
                 seen.add(parts[1])
                 arches.append(parts[1])
     return arches
@@ -232,7 +249,7 @@ def collect_existing_ksud_arches(apk_path: Path) -> List[str]:
 
 def strip_binary(src: Path, strip_tool: Path, tmp_dir: Path) -> bytes:
     dst = tmp_dir / src.name
-    shutil.copy2(src, dst)
+    shutil.copyfile(src, dst)
     run_cmd([str(strip_tool), "--strip-all", str(dst)], "strip failed")
     return dst.read_bytes()
 
@@ -267,7 +284,7 @@ def repack_apk(
                     if len(parts) >= 3 and parts[1] in ksud_bytes_by_arch:
                         continue
 
-                data = zin.read(name)
+                data = zin.read(info)
                 new_info = ZipInfo(filename=name, date_time=info.date_time)
                 new_info.compress_type = info.compress_type
                 new_info.external_attr = info.external_attr
@@ -350,7 +367,7 @@ def do_repack(args: argparse.Namespace) -> int:
     out_dir = Path(args.out_dir).resolve() if args.out_dir else ws_root / "dist"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    output_name = cfg.get("output_name") or apk.stem
+    output_name = validate_single_segment(cfg.get("output_name") or apk.stem, "output_name")
     unsigned_path = out_dir / f"{output_name}-repack-unsigned.apk"
     aligned_path = out_dir / f"{output_name}-repack-aligned.apk"
     signed_path = out_dir / f"{output_name}.apk"
@@ -389,6 +406,9 @@ def do_repack(args: argparse.Namespace) -> int:
         if apksigner is None:
             raise FileNotFoundError("apksigner not found in PATH or Android SDK build-tools")
 
+        sign_env = dict(os.environ)
+        sign_env["KSU_KS_PASS"] = str(signing["keystore_pass"])
+        sign_env["KSU_KEY_PASS"] = str(signing["key_pass"])
         run_cmd(
             [
                 str(apksigner),
@@ -406,15 +426,20 @@ def do_repack(args: argparse.Namespace) -> int:
                 "--ks-key-alias",
                 signing["key_alias"],
                 "--ks-pass",
-                f"pass:{signing['keystore_pass']}",
+                "env:KSU_KS_PASS",
                 "--key-pass",
-                f"pass:{signing['key_pass']}",
+                "env:KSU_KEY_PASS",
                 "--out",
                 str(signed_path),
                 str(aligned_path),
             ],
             "apksigner failed",
+            env=sign_env,
         )
+    except Exception:
+        if signed_path.exists():
+            signed_path.unlink()
+        raise
     finally:
         # Remove intermediate files regardless of success/failure.
         for tmp in (unsigned_path, aligned_path):

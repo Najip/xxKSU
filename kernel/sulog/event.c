@@ -194,9 +194,10 @@ static struct ksu_sulog_pending_event *ksu_sulog_capture(__u16 event_type, const
 		if (!filename_len)
 			goto out_free_payload;
 	} else {
-		filename_len = strscpy(filename_buf, kernel_filename, KSU_SULOG_MAX_FILENAME_LEN);
-		if (!filename_len || filename_len < 0)
-			goto out_free_payload;		
+		ssize_t copied = strscpy(filename_buf, kernel_filename, min(remaining, KSU_SULOG_MAX_FILENAME_LEN));
+		if (copied <= 0)
+			goto out_free_payload;
+		filename_len = (__u32)copied + 1;
 	}
 
 	remaining -= filename_len;

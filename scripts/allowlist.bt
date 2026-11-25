@@ -3,13 +3,13 @@
 #define KSU_MAX_GROUPS 32
 #define KSU_SELINUX_DOMAIN 64
 
-// Define the root_profile structure with padding for 64-bit alignment.
+// Define the root_profile structure with padding for 64-bit alignment (KSU_APP_PROFILE_VER = 4).
 struct root_profile {
-    uint32 uid;
-    uint32 gid;
+    int32 uid;
+    int32 gid;
 
     uint32 groups_count;
-    uint32 groups[KSU_MAX_GROUPS];
+    int32 groups[KSU_MAX_GROUPS];
     char padding1[4]; // Padding for 64-bit alignment.
 
     struct {
@@ -19,9 +19,10 @@ struct root_profile {
     } capabilities;
 
     char selinux_domain[KSU_SELINUX_DOMAIN];
-    
-    uint32 namespaces;
+
+    int32 namespaces;
     char padding2[4]; // Padding for 64-bit alignment.
+    uint64 flags;
 };
 
 // Define the non_root_profile structure with padding for 64-bit alignment.
@@ -33,7 +34,7 @@ struct non_root_profile {
 // Define the rp_config structure with padding for 64-bit alignment.
 struct rp_config_t {
     byte use_default;
-    
+
     char template_name[KSU_MAX_PACKAGE_NAME];
     char padding[7]; // Padding to make the total size a multiple of 8.
 
@@ -46,7 +47,7 @@ struct nrp_config_t {
     char padding1[7]; // Padding to make the total size a multiple of 8.
 
     struct non_root_profile profile;
-    char padding2[488]; // Padding to align the union
+    char padding2[496]; // Padding to match sizeof(rp_config_t) = 512 bytes.
 };
 
 // Define the main app_profile structure
@@ -54,7 +55,8 @@ typedef struct {
     uint32 version;
     char key[KSU_MAX_PACKAGE_NAME];
     int32 current_uid;
-    int64 allow_su;
+    byte allow_su;
+    char padding_allow_su[7];
 
     // Based on allow_su, decide which profile to use
     if (allow_su != 0) {
