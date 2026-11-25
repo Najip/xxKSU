@@ -655,7 +655,8 @@ static bool add_filename_trans(struct policydb *db, const char *s, const char *t
 #else // < 5.7.0, has no filename_trans_key, but struct filename_trans
 
 	struct filename_trans *new_key = NULL;
-	struct filename_trans key;
+	struct filename_trans key = {};
+	key.stype = src->value;
 	key.ttype = tgt->value;
 	key.tclass = cls->value;
 	key.name = (char *)o;
@@ -684,9 +685,11 @@ static bool add_filename_trans(struct policydb *db, const char *s, const char *t
 			pr_err("add_filename_trans: hashtab_insert failed: %d\n", rc);
 			goto free_name;
 		}
+	} else {
+		trans->otype = def->value;
 	}
 
-	return ebitmap_set_bit(&db->filename_trans_ttypes, src->value - 1, 1) == 0;
+	return ebitmap_set_bit(&db->filename_trans_ttypes, tgt->value, 1) == 0;
 #endif
 
 free_name:

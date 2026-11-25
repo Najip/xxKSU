@@ -8,6 +8,8 @@ static struct ksu_file_wrapper *ksu_create_file_wrapper(struct file *fp);
 static int ksu_wrapper_open(struct inode *ino, struct file *fp)
 {
 	struct path *orig_path = fp->f_path.dentry->d_fsdata;
+	if (!orig_path)
+		return -EINVAL;
 	struct file *orig_file = dentry_open(orig_path, fp->f_flags, current_cred());
 	if (IS_ERR(orig_file)) {
 		return PTR_ERR(orig_file);
@@ -441,7 +443,70 @@ static const struct dentry_operations ksu_file_wrapper_d_ops = {
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
 #define ksu_anon_inode_create_getfile_compat anon_inode_getfile_secure
 #else
-#define ksu_anon_inode_create_getfile_compat(a, b, c, d, e) anon_inode_getfile(a, b, c, d)
+static const struct file_operations ksu_anon_seed_fops = {};
+
+static struct file *ksu_anon_inode_create_getfile_compat(
+	const char *name, const struct file_operations *fops,
+	void *priv, int flags, const struct inode *context_inode)
+{
+	struct file *seed, *file;
+	struct inode *inode;
+	struct vfsmount *mnt;
+
+	(void)context_inode;
+	if (fops->owner && !try_module_get(fops->owner))
+		return ERR_PTR(-ENOENT);
+
+	seed = anon_inode_getfile("[ksu_seed]", &ksu_anon_seed_fops, NULL, O_CLOEXEC);
+	if (IS_ERR(seed)) {
+		module_put(fops->owner);
+		return seed;
+	}
+	mnt = mntget(seed->f_path.mnt);
+	fput(seed);
+
+	inode = alloc_anon_inode(mnt->mnt_sb);
+	if (IS_ERR(inode)) {
+		mntput(mnt);
+		module_put(fops->owner);
+		return ERR_CAST(inode);
+	}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
+	file = alloc_file_pseudo(inode, mnt, name, flags, fops);
+	mntput(mnt);
+	if (IS_ERR(file)) {
+		iput(inode);
+		module_put(fops->owner);
+		return file;
+	}
+#else
+	{
+		struct path path;
+		struct qstr this = QSTR_INIT(name, strlen(name));
+
+		path.dentry = d_alloc_pseudo(mnt->mnt_sb, &this);
+		if (!path.dentry) {
+			iput(inode);
+			mntput(mnt);
+			module_put(fops->owner);
+			return ERR_PTR(-ENOMEM);
+		}
+		path.mnt = mnt;
+		d_instantiate(path.dentry, inode);
+		file = alloc_file(&path, OPEN_FMODE(flags), fops);
+		if (IS_ERR(file)) {
+			path_put(&path);
+			module_put(fops->owner);
+			return file;
+		}
+	}
+#endif
+	file->f_mapping = inode->i_mapping;
+	file->f_flags = flags & (O_ACCMODE | O_NONBLOCK);
+	file->private_data = priv;
+	return file;
+}
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0) && defined(MODULE)

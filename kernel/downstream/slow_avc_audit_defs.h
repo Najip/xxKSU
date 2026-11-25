@@ -39,7 +39,7 @@ static __always_inline void ksu_slow_avc_audit_inline(u32 *tsid)
 	//if (unlikely(!priv_app_sid))
 	//	return;
 
-	if (*tsid != cached_su_sid)
+	if (unlikely(!cached_su_sid) || *tsid != cached_su_sid)
 		return;
 
 	pr_info("selinux_hide: slow_avc_audit: replace tsid: %u with priv_app_sid: %u\n", *tsid, priv_app_sid);

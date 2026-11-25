@@ -28,10 +28,31 @@ static void crown_manager(const char *apk, struct list_head *uid_data)
 {
 	struct list_head *list = (struct list_head *)uid_data;
 	struct uid_data *np;
+	char dir[DATA_PATH_LEN];
+	char pkg[KSU_MAX_PACKAGE_NAME];
+	const char *last_slash = strrchr(apk, '/');
+	size_t dir_len;
+
+	if (!last_slash || last_slash == apk) {
+		pr_err("crown_manager: invalid apk path: %s\n", apk);
+		return;
+	}
+	dir_len = (size_t)(last_slash - apk);
+	if (dir_len >= sizeof(dir)) {
+		pr_err("crown_manager: apk dir path too long: %s\n", apk);
+		return;
+	}
+	memcpy(dir, apk, dir_len);
+	dir[dir_len] = '\0';
+
+	if (get_pkg_from_apk_dir_path(pkg, dir) < 0) {
+		pr_err("crown_manager: failed to extract package from %s\n", apk);
+		return;
+	}
 
 	list_for_each_entry (np, list, list) {
-		if (test_extra_pkgs(np->package) || strncmp(np->package, KSU_PACKAGE_NAME, KSU_MAX_PACKAGE_NAME) == 0) {
-			pr_info("Crowning manager: uid=%d\n", np->uid);
+		if (strncmp(np->package, pkg, KSU_MAX_PACKAGE_NAME) == 0) {
+			pr_info("Crowning manager: %s uid=%d\n", np->package, np->uid);
 			ksu_set_manager_appid(np->uid);
 			break;
 		}
