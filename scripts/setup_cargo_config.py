@@ -3,6 +3,7 @@
 import argparse
 import os
 import platform
+import re
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ def detect_ndk_root(cli_value: str | None) -> Path:
     if cli_value:
         candidates.append(Path(cli_value).expanduser())
 
-    for env_name in ("ANDROID_NDK_ROOT", "ANDROID_NDK_HOME"):
+    for env_name in ("ANDROID_NDK_ROOT", "ANDROID_NDK_HOME", "ANDROID_NDK"):
         env_value = os.environ.get(env_name)
         if env_value:
             candidates.append(Path(env_value).expanduser())
@@ -27,7 +28,11 @@ def detect_ndk_root(cli_value: str | None) -> Path:
         candidates.append(sdk_root / "ndk-bundle")
         ndk_dir = sdk_root / "ndk"
         if ndk_dir.is_dir():
-            versions = sorted((path for path in ndk_dir.iterdir() if path.is_dir()), reverse=True)
+            versions = sorted(
+                (path for path in ndk_dir.iterdir() if path.is_dir()),
+                key=lambda p: tuple(int(n) for n in re.findall(r"\d+", p.name)) or (0,),
+                reverse=True,
+            )
             candidates.extend(versions)
 
     for candidate in candidates:
@@ -79,7 +84,7 @@ def resolve_host_tag(ndk_root: Path, cli_value: str | None) -> str:
 
 
 def toml_string(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\") + '"'
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def render_config(ndk_root: Path, host_tag: str, api_level: int) -> str:
@@ -99,11 +104,11 @@ def render_config(ndk_root: Path, host_tag: str, api_level: int) -> str:
         if not path.is_file():
             raise FileNotFoundError(f"Required NDK tool not found: {path}")
     
-    # sysroot should use slash, not backslash
-    sysroot_with_slashes = str(sysroot).replace('\\', '/')
+    # sysroot and include paths should use forward slashes so bindgen does not treat backslashes as escapes
+    sysroot_with_slashes = str(sysroot).replace("\\", "/")
 
-    aarch64_bindgen = f"--sysroot={sysroot_with_slashes} -I{sysroot / 'usr' / 'include' / 'aarch64-linux-android'}"
-    x86_64_bindgen = f"--sysroot={sysroot_with_slashes} -I{sysroot / 'usr' / 'include' / 'x86_64-linux-android'}"
+    aarch64_bindgen = f"--sysroot={sysroot_with_slashes} -I{sysroot_with_slashes}/usr/include/aarch64-linux-android"
+    x86_64_bindgen = f"--sysroot={sysroot_with_slashes} -I{sysroot_with_slashes}/usr/include/x86_64-linux-android"
 
     return "\n".join(
         [
