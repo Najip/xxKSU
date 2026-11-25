@@ -17,17 +17,15 @@ use std::{
     collections::{BTreeMap, HashMap},
     env::var as env_var,
     fs::{File, Permissions, canonicalize, remove_dir_all, set_permissions},
-    io::Cursor,
+    io::{Cursor, Read},
     path::{Path, PathBuf},
     process::Command,
-    str::FromStr,
     time::Instant,
 };
 use std::{
     fs::{copy, rename},
     io::Write,
 };
-use zip_extensions::inflate::zip_extract::zip_extract_file_to_memory;
 
 use crate::defs::{MODULE_DIR, MODULE_UPDATE_DIR, UPDATE_FILE_NAME};
 use crate::module::ModuleType::{Active, All};
@@ -697,10 +695,19 @@ fn install_module_to_system(zip: &str) -> Result<String> {
 
     // read the module_id from zip, if failed it will return early.
     let mut buffer: Vec<u8> = Vec::new();
-    let entry_path = PathBuf::from_str("module.prop")?;
-    let zip_path = PathBuf::from_str(zip)?;
-    let zip_path = zip_path.canonicalize()?;
-    zip_extract_file_to_memory(&zip_path, &entry_path, &mut buffer)?;
+    let zip_path = Path::new(zip).canonicalize()?;
+    {
+        let mut archive = zip::ZipArchive::new(File::open(&zip_path)?)?;
+        let entry_name = if archive.index_for_name("module.prop").is_some() {
+            "module.prop"
+        } else {
+            "./module.prop"
+        };
+        let entry = archive
+            .by_name(entry_name)
+            .context("module.prop not found in zip")?;
+        entry.take(1024 * 1024).read_to_end(&mut buffer)?;
+    }
 
     let mut module_prop = HashMap::new();
     PropertiesIter::new_with_encoding(Cursor::new(buffer), encoding_rs::UTF_8).read_into(
@@ -925,6 +932,7 @@ pub fn enable_module(id: &str) -> Result<()> {
 }
 
 pub fn disable_module(id: &str) -> Result<()> {
+    validate_module_id(id)?;
     let module_path = Path::new(defs::MODULE_DIR).join(id);
     ensure!(module_path.exists(), "Module {id} not found");
 

@@ -198,14 +198,14 @@ pub fn root_shell() -> Result<()> {
     );
     opts.optopt("Z", "context", "Specify the SELinux context", "CONTEXT");
 
-    // Replace -cn with -z, -mm with -M for supporting getopt_long
+    // Replace -cn with -Z, -mm with -M for supporting getopt_long
     let args = args
         .into_iter()
         .map(|e| {
             if e == "-mm" {
                 "-M".to_string()
             } else if e == "-cn" {
-                "-z".to_string()
+                "-Z".to_string()
             } else {
                 e
             }
