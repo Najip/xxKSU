@@ -141,22 +141,21 @@ static void fillArrayWithList(JNIEnv *env, jobject list, int *data, int count) {
 extern "C"
 JNIEXPORT jobject JNICALL
 Java_me_weishu_kernelsu_Natives_getAppProfile(JNIEnv *env, jobject, jstring pkg, jint uid) {
-    if (env->GetStringLength(pkg) > KSU_MAX_PACKAGE_NAME) {
-        return nullptr;
-    }
-
-    p_key_t key = {};
-    auto cpkg = env->GetStringUTFChars(pkg, nullptr);
-    strcpy(key, cpkg);
-    env->ReleaseStringUTFChars(pkg, cpkg);
-
     app_profile profile = {};
     profile.version = KSU_APP_PROFILE_VER;
-
-    strcpy(profile.key, key);
     profile.curr_uid = uid;
 
-    bool useDefaultProfile = get_app_profile(&profile) != 0;
+    p_key_t key = {};
+    bool useDefaultProfile = true;
+    if (pkg && env->GetStringUTFLength(pkg) < KSU_MAX_PACKAGE_NAME) {
+        auto cpkg = env->GetStringUTFChars(pkg, nullptr);
+        if (cpkg) {
+            strlcpy(key, cpkg, sizeof(key));
+            env->ReleaseStringUTFChars(pkg, cpkg);
+            strlcpy(profile.key, key, sizeof(profile.key));
+            useDefaultProfile = get_app_profile(&profile) != 0;
+        }
+    }
 
     auto cls = env->FindClass("me/weishu/kernelsu/Natives$Profile");
     auto constructor = env->GetMethodID(cls, "<init>", "()V");
@@ -239,6 +238,9 @@ Java_me_weishu_kernelsu_Natives_getAppProfile(JNIEnv *env, jobject, jstring pkg,
 extern "C"
 JNIEXPORT jboolean JNICALL
 Java_me_weishu_kernelsu_Natives_setAppProfile(JNIEnv *env, jobject clazz, jobject profile) {
+    if (!profile) {
+        return false;
+    }
     auto cls = env->FindClass("me/weishu/kernelsu/Natives$Profile");
 
     auto keyField = env->GetFieldID(cls, "name", "Ljava/lang/String;");
@@ -263,13 +265,16 @@ Java_me_weishu_kernelsu_Natives_setAppProfile(JNIEnv *env, jobject clazz, jobjec
     if (!key) {
         return false;
     }
-    if (env->GetStringLength((jstring) key) > KSU_MAX_PACKAGE_NAME) {
+    if (env->GetStringUTFLength((jstring) key) >= KSU_MAX_PACKAGE_NAME) {
         return false;
     }
 
     auto cpkg = env->GetStringUTFChars((jstring) key, nullptr);
+    if (!cpkg) {
+        return false;
+    }
     p_key_t p_key = {};
-    strcpy(p_key, cpkg);
+    strlcpy(p_key, cpkg, sizeof(p_key));
     env->ReleaseStringUTFChars((jstring) key, cpkg);
 
     auto currentUid = env->GetIntField(profile, currentUidField);
@@ -285,7 +290,7 @@ Java_me_weishu_kernelsu_Natives_setAppProfile(JNIEnv *env, jobject clazz, jobjec
     app_profile p = {};
     p.version = KSU_APP_PROFILE_VER;
 
-    strcpy(p.key, p_key);
+    strlcpy(p.key, p_key, sizeof(p.key));
     p.allow_su = allowSu;
     p.curr_uid = currentUid;
 
@@ -293,8 +298,14 @@ Java_me_weishu_kernelsu_Natives_setAppProfile(JNIEnv *env, jobject clazz, jobjec
         p.rp_config.use_default = env->GetBooleanField(profile, rootUseDefaultField);
         auto templateName = env->GetObjectField(profile, rootTemplateField);
         if (templateName) {
+            if (env->GetStringUTFLength((jstring) templateName) >= (jsize) sizeof(p.rp_config.template_name)) {
+                return false;
+            }
             auto ctemplateName = env->GetStringUTFChars((jstring) templateName, nullptr);
-            strcpy(p.rp_config.template_name, ctemplateName);
+            if (!ctemplateName) {
+                return false;
+            }
+            strlcpy(p.rp_config.template_name, ctemplateName, sizeof(p.rp_config.template_name));
             env->ReleaseStringUTFChars((jstring) templateName, ctemplateName);
         }
 
@@ -302,7 +313,7 @@ Java_me_weishu_kernelsu_Natives_setAppProfile(JNIEnv *env, jobject clazz, jobjec
         p.rp_config.profile.gid = gid;
 
         int groups_count = getListSize(env, groups);
-        if (groups_count > KSU_MAX_GROUPS) {
+        if (groups_count < 0 || groups_count > KSU_MAX_GROUPS) {
             LOGD("groups count too large: %d", groups_count);
             return false;
         }
@@ -311,8 +322,14 @@ Java_me_weishu_kernelsu_Natives_setAppProfile(JNIEnv *env, jobject clazz, jobjec
 
         p.rp_config.profile.capabilities.effective = capListToBits(env, capabilities);
 
+        if (!domain || env->GetStringUTFLength((jstring) domain) >= (jsize) sizeof(p.rp_config.profile.selinux_domain)) {
+            return false;
+        }
         auto cdomain = env->GetStringUTFChars((jstring) domain, nullptr);
-        strcpy(p.rp_config.profile.selinux_domain, cdomain);
+        if (!cdomain) {
+            return false;
+        }
+        strlcpy(p.rp_config.profile.selinux_domain, cdomain, sizeof(p.rp_config.profile.selinux_domain));
         env->ReleaseStringUTFChars((jstring) domain, cdomain);
 
         p.rp_config.profile.namespaces = env->GetIntField(profile, namespacesField);

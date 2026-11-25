@@ -309,11 +309,14 @@ class SettingsViewModel(
     fun setSelinuxHideEnabled(enabled: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
             val status = repo.setSelinuxHideEnabled(enabled)
-            repo.execKsudFeatureSave()
-            _uiState.update { it.copy(isSelinuxHideEnabled = enabled) }
             when (status) {
-                0 -> {}
+                0 -> {
+                    repo.execKsudFeatureSave()
+                    _uiState.update { it.copy(isSelinuxHideEnabled = enabled) }
+                }
                 -OsConstants.EAGAIN -> {
+                    repo.execKsudFeatureSave()
+                    _uiState.update { it.copy(isSelinuxHideEnabled = enabled) }
                     withContext(Dispatchers.Main) {
                         Toast.makeText(ksuApp, R.string.settings_selinux_hide_reboot_required,
                             Toast.LENGTH_LONG).show()

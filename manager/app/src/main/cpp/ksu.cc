@@ -16,9 +16,12 @@
 #include <climits>
 #include <sys/syscall.h>
 #include <cerrno>
+#include <pthread.h>
 #include "ksu.h"
 
 static int fd = -1;
+static pthread_mutex_t ksu_fd_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t ksu_info_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static inline int scan_driver_fd() {
     const char *kName = "[ksu_driver]";
@@ -63,26 +66,50 @@ static inline int scan_driver_fd() {
     return found;
 }
 
+static int get_driver_fd() {
+    int cur = __atomic_load_n(&fd, __ATOMIC_ACQUIRE);
+    if (cur >= 0) {
+        return cur;
+    }
+    pthread_mutex_lock(&ksu_fd_mutex);
+    cur = fd;
+    if (cur < 0) {
+        cur = scan_driver_fd();
+        __atomic_store_n(&fd, cur, __ATOMIC_RELEASE);
+    }
+    pthread_mutex_unlock(&ksu_fd_mutex);
+    return cur;
+}
+
 template<typename... Args>
 static int ksuctl(unsigned long op, Args &&... args) {
-
-    if (fd < 0) {
-        fd = scan_driver_fd();
-    }
+    int drv_fd = get_driver_fd();
 
     static_assert(sizeof...(Args) <= 1, "ioctl expects at most one extra argument");
 
-    return ioctl(fd, op, std::forward<Args>(args)...);
+    return ioctl(drv_fd, op, std::forward<Args>(args)...);
 }
 
 static struct ksu_get_info_cmd g_version {};
+static int g_version_ready = 0;
 
 struct ksu_get_info_cmd get_info() {
-    if (!g_version.version) {
-        if (ksuctl(KSU_IOCTL_GET_INFO, &g_version) < 0) {
-            ksuctl(KSU_IOCTL_GET_INFO_LEGACY, &g_version);
-            g_version.uapi_version = 0;
+    if (!__atomic_load_n(&g_version_ready, __ATOMIC_ACQUIRE)) {
+        pthread_mutex_lock(&ksu_info_mutex);
+        if (!g_version_ready) {
+            struct ksu_get_info_cmd info {};
+            if (ksuctl(KSU_IOCTL_GET_INFO, &info) < 0) {
+                ksuctl(KSU_IOCTL_GET_INFO_LEGACY, &info);
+                info.uapi_version = 0;
+            }
+            if (info.version) {
+                g_version = info;
+                __atomic_store_n(&g_version_ready, 1, __ATOMIC_RELEASE);
+            }
+            pthread_mutex_unlock(&ksu_info_mutex);
+            return info;
         }
+        pthread_mutex_unlock(&ksu_info_mutex);
     }
     return g_version;
 }
