@@ -116,7 +116,7 @@ def mojito_head():
     return c["sha"], tree, c["commit"]["message"].splitlines()[0], f"{a['name']} <{a['email']}>"
 
 
-def snapshot_commit(sha, subject, author, parent):
+def snapshot_commit(sha, subject, author, parent, base=""):
     """Commit mojito's drivers/kernelsu at `sha` as kernel/ on SNAP_BRANCH."""
     with tempfile.TemporaryDirectory(prefix="mojito-") as tmp:
         src = os.path.join(tmp, "src")
@@ -138,6 +138,10 @@ def snapshot_commit(sha, subject, author, parent):
     name, email = re.match(r"(.*) <(.*)>", author).groups()
     env = {**os.environ, "GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email}
     msg = f"{subject}\n\nSnapshot of {MOJITO_DIR} from https://github.com/{MOJITO}/commit/{sha}\n"
+    if base:
+        # The tiann/KernelSU commit this branch was on when the snapshot was taken:
+        # tiann changes after it explain differences from this snapshot (drift report).
+        msg += f"Tiann-Base: {base}\n"
     args = ["commit-tree", tree, "-m", msg] + (["-p", parent] if parent else [])
     new = subprocess.run(["git", *IDENT, *args], env=env, check=True, text=True,
                          stdout=subprocess.PIPE).stdout.strip()
@@ -156,7 +160,8 @@ def apply_mojito(report, bootstrap=False, accept=False):
         return 0
     if not prev and not bootstrap:
         raise RuntimeError(f"No {SNAP_BRANCH} branch yet; run once with --bootstrap-mojito.")
-    new = snapshot_commit(sha, subject, author, prev)
+    base = git("merge-base", "HEAD", f"upstream/{UPSTREAM_BRANCH}", check=False)
+    new = snapshot_commit(sha, subject, author, prev, base)
     report["mojito"]["snapshot"] = new
     if not prev or accept:
         why = "first snapshot (baseline only)" if not prev else "marked as applied by hand (--mojito-accept)"
@@ -184,6 +189,53 @@ def apply_mojito(report, bootstrap=False, accept=False):
     git(*IDENT, "commit", "-q", f"--author={name} <{email}>", "-m", msg)
     report["mojito"]["applied"].append({"sha": sha, "subject": subject, "author": name})
     return 1
+
+
+# ---------- drift report ----------
+# How far kernel/ here is from backslashxx's newest mojito drivers/kernelsu.
+# Each differing file is explained by tiann (changed upstream after the
+# snapshot's Tiann-Base), local (changed by one of OWN_AUTHORS' commits on top
+# of tiann), or unexplained (worth a look).
+
+OWN_AUTHORS = ("8416702+Najip@users.noreply.github.com", "najipmunajat22@gmail.com")
+
+
+def drift(report):
+    snap = git("rev-parse", "-q", "--verify", f"refs/heads/{SNAP_BRANCH}", check=False)
+    if not snap:
+        return
+    files = git("diff", "--name-only", snap, "HEAD", "--", "kernel").splitlines()
+    m = re.search(r"^Tiann-Base: ([0-9a-f]{40})", git("log", "-1", "--format=%B", snap), re.M)
+    base = m.group(1) if m else ""
+    up = f"upstream/{UPSTREAM_BRANCH}"
+    by_tiann = set(git("diff", "--name-only", base, up, "--", "kernel").splitlines()) if base else set()
+    own = set()
+    merge_base = git("merge-base", "HEAD", up, check=False)
+    for email in OWN_AUTHORS:
+        own |= set(git("log", "--format=", "--name-only", f"--author={email}",
+                       f"{merge_base}..HEAD", "--", "kernel").splitlines())
+    out = {"tiann": [], "local": [], "unexplained": []}
+    for f in files:
+        out["tiann" if f in by_tiann else "local" if f in own else "unexplained"].append(f)
+    report["drift"] = {"snapshot": snap, "mojito": report.get("mojito", {}).get("head", ""),
+                       "base": base, "files": len(files), **out}
+
+
+def drift_lines(report):
+    d = report.get("drift")
+    if not d:
+        return []
+    mj = d["mojito"]
+    ref = f"[`{short(mj)}`](https://github.com/{MOJITO}/commit/{mj})" if mj else "the newest snapshot"
+    if not d["files"]:
+        return ["", f"Drift from backslashxx's newest mojito kernel ({ref}): none, `kernel/` is identical."]
+    lines = ["", f"Drift from backslashxx's newest mojito kernel ({ref}): {d['files']} file(s) differ in `kernel/`."]
+    for key, label in (("tiann", "newer tiann/KernelSU changes"), ("local", "changed here on purpose"),
+                       ("unexplained", "**unexplained, worth a look**")):
+        if d[key]:
+            lines.append(f"- {label}: " + ", ".join(f"`{f}`" for f in d[key][:20])
+                         + (f" and {len(d[key]) - 20} more" if len(d[key]) > 20 else ""))
+    return lines
 
 
 # ---------- report ----------
@@ -217,6 +269,7 @@ def notes(report, tag):
                          f"{a['subject']} ({a['author']})")
     for s in mj.get("skipped", []):
         lines.append(f"- Skipped [`{short(s['sha'])}`](https://github.com/{MOJITO}/commit/{s['sha']}): {s['why']}")
+    lines += drift_lines(report)
     if report["conflicts"]:
         lines += ["", "Not included (conflict, see the open issue):"]
         lines += [f"- {c['what']}" for c in report["conflicts"]]
@@ -270,6 +323,7 @@ def main():
         applied = 0
     head = git("rev-parse", "HEAD")
     changed = head != old_head
+    drift(report)
 
     tag = tag_name(head) if (changed or args.force_release) else ""
     notes_file = os.path.join(args.out_dir, "xxksu-release-notes.md")
@@ -288,6 +342,7 @@ def main():
         "snapshot": report.get("mojito", {}).get("snapshot", ""),
         "release_tag": tag, "notes_file": notes_file, "issue_file": issue_file,
         "backslashxx_online": str(backslashxx_online()).lower(),
+        "drift_unexplained": str(len(report.get("drift", {}).get("unexplained", []))),
     }
     write_outputs(outs)
     print(json.dumps({**outs, "report": report}, indent=2))

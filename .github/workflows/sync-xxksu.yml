@@ -6,9 +6,12 @@ name: Sync xxKSU (tiann/KernelSU + mojito)
 #   2. apply new kernel-side xxKSU changes from
 #      ximi-mojito/android_kernel_xiaomi_mojito (personal, drivers/kernelsu),
 #      credited to their author
-#   3. push (force, with lease), tag, and build a release from the new head.
+#   3. push it to the staging branch (force, with lease), tag it, and build a
+#      pre-release. The A32 kernel builds the newest xxKSU release; when that
+#      works, Promote xxKSU moves the stable branch to it (promote-xxksu.yml).
 # A conflict pushes nothing for that part and opens/comments an issue.
-# Scheduled runs only happen on the default branch; on another branch run it by hand.
+# Scheduled runs only start from the default branch (the stable branch), but
+# the work always happens on the staging branch.
 
 on:
   schedule:
@@ -34,20 +37,22 @@ permissions:
   actions: write
 
 concurrency:
-  group: sync-xxksu-${{ github.ref_name }}
+  group: sync-xxksu
   cancel-in-progress: false
 
 env:
   ISSUE_TITLE: 'xxKSU sync needs a manual fix'
+  # Newest xxKSU (rebased daily). Repo variable XXKSU_STAGING_BRANCH changes it.
+  STAGING: ${{ vars.XXKSU_STAGING_BRANCH || 'tiann-rebase' }}
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout ${{ github.ref_name }}
+      - name: Checkout the staging branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.STAGING }}
           fetch-depth: 0
           # Rebased commits touch .github/workflows, which the default token may
           # not push. XXKSU_PUSH_TOKEN: a token with Contents + Workflows write on this repo.
@@ -70,10 +75,10 @@ jobs:
             cat "$RUNNER_TEMP/xxksu-release-notes.md"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Push ${{ github.ref_name }} and the mojito snapshot
+      - name: Push the staging branch and the mojito snapshot
         if: steps.sync.outputs.changed == 'true' || steps.sync.outputs.snapshot != ''
         env:
-          BRANCH: ${{ github.ref_name }}
+          BRANCH: ${{ env.STAGING }}
           OLD: ${{ steps.sync.outputs.old_head }}
           SNAP: ${{ steps.sync.outputs.snapshot }}
         run: |
@@ -96,7 +101,8 @@ jobs:
           # start release.yml (it listens to v* tags) next to the dispatch below.
           gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$(git rev-parse HEAD)" >/dev/null
           # Dispatched on the tag, so every build job checks out exactly this commit.
-          gh workflow run release.yml --ref "$TAG" -f tag="$TAG" -f release_notes="$(cat "$NOTES")" -f dispatch_kernel=true
+          gh workflow run release.yml --ref "$TAG" -f tag="$TAG" -f release_notes="$(cat "$NOTES")" \
+            -f prerelease=true -f dispatch_kernel=true
           echo "Release build started for $TAG."
 
       - name: Report a conflict
