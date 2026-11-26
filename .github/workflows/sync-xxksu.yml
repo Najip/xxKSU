@@ -1,0 +1,126 @@
+name: Sync xxKSU (tiann/KernelSU + mojito)
+
+# Daily, like backslashxx did by hand:
+#   1. rebase every xxKSU commit of this branch onto tiann/KernelSU main
+#      (upstream commits keep their SHAs and authors; rebased ones keep theirs)
+#   2. apply new kernel-side xxKSU changes from
+#      ximi-mojito/android_kernel_xiaomi_mojito (personal, drivers/kernelsu),
+#      credited to their author
+#   3. push (force, with lease), tag, and build a release from the new head.
+# A conflict pushes nothing for that part and opens/comments an issue.
+# Scheduled runs only happen on the default branch; on another branch run it by hand.
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # 08:00 Jakarta
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Build and publish a release even if nothing changed'
+        type: boolean
+        default: false
+      mojito_accept:
+        description: 'Store the new mojito snapshot without applying it (after fixing its conflict by hand)'
+        type: boolean
+        default: false
+      bootstrap_mojito:
+        description: 'First run only: store the current mojito drivers/kernelsu as the baseline snapshot'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: sync-xxksu-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  ISSUE_TITLE: 'xxKSU sync needs a manual fix'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ${{ github.ref_name }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          # Rebased commits touch .github/workflows, which the default token may
+          # not push. XXKSU_PUSH_TOKEN: a token with Contents + Workflows write on this repo.
+          token: ${{ secrets.XXKSU_PUSH_TOKEN || github.token }}
+
+      - name: Rebase on tiann/KernelSU and apply mojito
+        id: sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_COMMITTER_NAME: Najip Ali Munajat
+          GIT_COMMITTER_EMAIL: 8416702+Najip@users.noreply.github.com
+        run: |
+          flags=()
+          [[ "${{ inputs.force_release }}" == "true" ]] && flags+=(--force-release)
+          [[ "${{ inputs.mojito_accept }}" == "true" ]] && flags+=(--mojito-accept)
+          [[ "${{ inputs.bootstrap_mojito }}" == "true" ]] && flags+=(--bootstrap-mojito)
+          python3 .github/scripts/sync_xxksu.py --out-dir "$RUNNER_TEMP" "${flags[@]}"
+          {
+            echo "### xxKSU sync"
+            cat "$RUNNER_TEMP/xxksu-release-notes.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push ${{ github.ref_name }} and the mojito snapshot
+        if: steps.sync.outputs.changed == 'true' || steps.sync.outputs.snapshot != ''
+        env:
+          BRANCH: ${{ github.ref_name }}
+          OLD: ${{ steps.sync.outputs.old_head }}
+          SNAP: ${{ steps.sync.outputs.snapshot }}
+        run: |
+          if [[ -n "$SNAP" ]]; then
+            git push origin "refs/heads/mojito-kernelsu:refs/heads/mojito-kernelsu"
+          fi
+          if [[ "${{ steps.sync.outputs.changed }}" == "true" ]]; then
+            # Lease: only replace the branch if nobody pushed to it during this run.
+            git push --force-with-lease="refs/heads/$BRANCH:$OLD" origin "HEAD:refs/heads/$BRANCH"
+          fi
+
+      - name: Tag and start the release build
+        if: steps.sync.outputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.sync.outputs.release_tag }}
+          NOTES: ${{ steps.sync.outputs.notes_file }}
+        run: |
+          # Created with the default token so the tag push itself does not also
+          # start release.yml (it listens to v* tags) next to the dispatch below.
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$(git rev-parse HEAD)" >/dev/null
+          # Dispatched on the tag, so every build job checks out exactly this commit.
+          gh workflow run release.yml --ref "$TAG" -f tag="$TAG" -f release_notes="$(cat "$NOTES")" -f dispatch_kernel=true
+          echo "Release build started for $TAG."
+
+      - name: Report a conflict
+        if: steps.sync.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: ${{ steps.sync.outputs.issue_file }}
+        run: |
+          n=$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')
+          if [[ -n "$n" ]]; then gh issue comment "$n" --body-file "$BODY"; else gh issue create --title "$ISSUE_TITLE" --body-file "$BODY"; fi
+
+      - name: Close the conflict issue when a run is clean
+        if: steps.sync.outputs.conflict == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')
+          [[ -z "$n" ]] || gh issue close "$n" --comment "Today's sync ran without conflicts."
+
+      - name: Note if backslashxx/KernelSU is back
+        if: steps.sync.outputs.backslashxx_online == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="backslashxx/KernelSU is back online"
+          n=$(gh issue list --state all --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          [[ -n "$n" ]] || gh issue create --title "$title" --body "https://github.com/backslashxx/KernelSU is available again. The sync still uses tiann/KernelSU + mojito; check whether it should follow backslashxx again."
