@@ -63,6 +63,11 @@ jobs:
 
       - name: Commit and push synced changes
         if: steps.check.outputs.changed == 'true'
+        env:
+          # Kernel sync: the upstream author (backslashxx), so he is credited
+          # for his code. I stay the committer. Empty for status-only commits.
+          COMMIT_AUTHOR: ${{ steps.check.outputs.commit_author }}
+          MSG_FILE: ${{ steps.check.outputs.commit_msg_file }}
         run: |
           git config user.name "Najip Ali Munajat"
           git config user.email "8416702+Najip@users.noreply.github.com"
@@ -71,7 +76,12 @@ jobs:
             echo "Nothing to commit."
             exit 0
           fi
-          git commit -m "${{ steps.check.outputs.commit_msg }}"
+          if [[ -n "$COMMIT_AUTHOR" ]]; then
+            git commit -F "$MSG_FILE" --author="$COMMIT_AUTHOR"
+          else
+            git commit -F "$MSG_FILE"
+          fi
+          git log -1 --format='Author: %an <%ae>%nCommitter: %cn <%ce>%n%n%B'
           git push origin HEAD:sync-mojito
 
   release:
