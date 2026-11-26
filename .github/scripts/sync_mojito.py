@@ -90,6 +90,39 @@ def latest_mojito_commit():
     return sha, date, subject
 
 
+def authors_since(repo, branch, path, old_sha, new_sha):
+    """Authors ("Name <email>") of the commits that changed path after old_sha
+    up to new_sha, newest first. The sync commit is credited to them: the
+    newest one as its author, the others as Co-authored-by."""
+    out, page = [], 1
+    q = f"&path={path}" if path else ""
+    while page <= 5:
+        code, data = api_get(f"repos/{repo}/commits?sha={new_sha or branch}{q}&per_page=100&page={page}")
+        if code != 200 or not isinstance(data, list) or not data:
+            break
+        for c in data:
+            if old_sha and c["sha"].startswith(old_sha):
+                return out
+            a = (c.get("commit") or {}).get("author") or {}
+            if a.get("name") and a.get("email"):
+                who = f"{a['name']} <{a['email']}>"
+                if who not in out:
+                    out.append(who)
+            if not old_sha:
+                return out  # first sync: only the newest commit
+        page += 1
+    return out
+
+
+def commit_message(subject, source_url, authors):
+    """Sync commit message; extra authors as Co-authored-by trailers."""
+    lines = [subject, "", f"Synced from {source_url}"]
+    if len(authors) > 1:
+        lines.append("")
+        lines += [f"Co-authored-by: {a}" for a in authors[1:]]
+    return "\n".join(lines) + "\n"
+
+
 def sync_subdir(repo, branch, subdir):
     """Sparse-clone repo@branch and mirror subdir into kernel/."""
     with tempfile.TemporaryDirectory(prefix="xxksu-sync-") as tmp:
@@ -218,6 +251,8 @@ def main():
 
     changed = False
     commit_msg = ""
+    authors = []
+    source_url = ""
     release_tag = ""
     release_notes = ""
 
@@ -225,6 +260,8 @@ def main():
         state["active_source"] = UPSTREAM_REPO
         state["active_branch"] = up_branch
         if args.force_sync or up_sha != state.get("upstream_ksu_sha"):
+            authors = authors_since(UPSTREAM_REPO, up_branch, "kernel", state.get("upstream_ksu_sha", ""), up_sha)
+            source_url = f"https://github.com/{UPSTREAM_REPO}/commit/{up_sha}"
             sync_subdir(UPSTREAM_REPO, up_branch, "kernel")
             state["upstream_ksu_sha"] = up_sha
             state["mojito_date"] = up_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -238,6 +275,9 @@ def main():
         state["active_branch"] = MOJITO_BRANCH
         sha, date, subject = latest_mojito_commit()
         if args.force_sync or sha != state.get("mojito_sha"):
+            old = state.get("mojito_sha", "") if sha != state.get("mojito_sha") else ""
+            authors = authors_since(MOJITO_REPO, MOJITO_BRANCH, MOJITO_SUBDIR, old, sha)
+            source_url = f"https://github.com/{MOJITO_REPO}/commit/{sha}"
             sync_subdir(MOJITO_REPO, MOJITO_BRANCH, MOJITO_SUBDIR)
             state["mojito_sha"] = sha
             state["mojito_date"] = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -264,7 +304,15 @@ def main():
     should_commit = changed or readme_changed or (up_status != prev_upstream_status)
     should_release = changed or args.force_release
 
+    # Kernel sync: credit the upstream author(s); status-only commits stay mine.
+    msg_file = os.path.join(tempfile.gettempdir(), "sync-commit-msg.txt")
+    with open(msg_file, "w", encoding="utf-8") as f:
+        f.write(commit_message(commit_msg, source_url, authors) if changed and source_url
+                else (commit_msg or "docs: update sync-mojito status") + "\n")
+
     write_output({
+        "commit_author": authors[0] if changed and authors else "",
+        "commit_msg_file": msg_file,
         "changed": "true" if should_commit else "false",
         "kernel_changed": "true" if changed else "false",
         "should_release": "true" if should_release else "false",
