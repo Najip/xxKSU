@@ -16,10 +16,20 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (leave blank to auto-generate from sync-state)"
+        description: "Release tag (leave blank to auto-generate)"
         required: false
         type: string
         default: ""
+      release_notes:
+        description: "Release notes (the Sync xxKSU workflow fills this in)"
+        required: false
+        type: string
+        default: ""
+      dispatch_kernel:
+        description: "Afterwards start the A32 kernel pre-release build (needs KERNEL_DISPATCH_TOKEN)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -41,7 +51,7 @@ jobs:
             tag="${{ github.ref_name }}"
           fi
           if [[ -z "$tag" ]]; then
-            tag="v3.3.1-mojito-$(date -u +%Y%m%d)-${GITHUB_SHA:0:8}"
+            tag="v3.3.1-xx-$(date -u +%Y%m%d)-${GITHUB_SHA:0:8}"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Release tag: $tag"
@@ -105,3 +115,19 @@ jobs:
             lkm/lkm-*_kernelsu.ko
             ksud/ksud-*
             ksuinit/*
+
+  dispatch-kernel:
+    needs: release
+    if: inputs.dispatch_kernel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start the A32 kernel pre-release build (when KERNEL_DISPATCH_TOKEN is set)
+        env:
+          GH_TOKEN: ${{ secrets.KERNEL_DISPATCH_TOKEN }}
+        run: |
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "KERNEL_DISPATCH_TOKEN not set; the kernel repo's upstream check picks this up."
+            exit 0
+          fi
+          gh workflow run kernel.yml --repo Najip/KernelSU_SUSFS_Samsung_SM-A325X --ref main \
+            -f root_flavor="Both (BakaSU + xxKSU)" -f commit_mode=Latest -f release_type=Pre-release

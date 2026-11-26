@@ -1,11 +1,13 @@
-<!-- SYNC-MOJITO:START -->
+<!-- XXKSU-SYNC:START -->
 > [!NOTE]
-> **Branch `sync-mojito`:** Synced from backslashxx's kernel-side KernelSU updates in [`ximi-mojito/android_kernel_xiaomi_mojito` (`personal` branch)](https://github.com/ximi-mojito/android_kernel_xiaomi_mojito/tree/personal) (latest synced commit: [`a6e6d9b6`](https://github.com/ximi-mojito/android_kernel_xiaomi_mojito/commit/a6e6d9b6aa38e831121ad86e721990607176fb0c) on 2026-11-24 (`KSU_VERSION=32733`)). It is named `sync-mojito` because the standalone `backslashxx/KernelSU` repository was removed and subsequent kernel-side updates are pulled from that mojito kernel branch.
+> **xxKSU, kept on top of [tiann/KernelSU](https://github.com/tiann/KernelSU) the way backslashxx did.** This branch is tiann/KernelSU `main` (its commits unchanged, with their own authors) plus backslashxx's xxKSU commits rebased on top. Every day the [Sync xxKSU](.github/workflows/sync-xxksu.yml) workflow:
 >
-> **Monitor status:** `backslashxx/KernelSU` is currently unavailable; falling back to `ximi-mojito/android_kernel_xiaomi_mojito`. Automated builds and releases are published in [Releases](https://github.com/Najip/xxKSU/releases).
+> 1. rebases the xxKSU commits onto the newest tiann/KernelSU `main` (each commit keeps its author);
+> 2. applies new kernel-side xxKSU changes that backslashxx publishes in [ximi-mojito/android_kernel_xiaomi_mojito](https://github.com/ximi-mojito/android_kernel_xiaomi_mojito/tree/personal) (`drivers/kernelsu`), credited to him. Each mojito state is kept on the [`mojito-kernelsu`](https://github.com/Najip/xxKSU/tree/mojito-kernelsu) branch;
+> 3. builds the manager and publishes a [release](https://github.com/Najip/xxKSU/releases).
 >
-> Backslashxx's last untouched commit from `backslashxx/KernelSU` (`9a02a5c1`) is preserved on the [`final`](https://github.com/Najip/xxKSU/tree/final) branch.
-<!-- SYNC-MOJITO:END -->
+> A conflict stops that part and opens an issue. Because of the rebase, commit IDs on this branch change whenever tiann/KernelSU moves; each release tag keeps its exact commit. backslashxx's last commit from the removed `backslashxx/KernelSU` (`9a02a5c1`) is on the [`final`](https://github.com/Najip/xxKSU/tree/final) branch.
+<!-- XXKSU-SYNC:END -->
 
 **English** | [Español](README_ES.md) | [简体中文](README_CN.md) | [繁體中文](README_TW.md) | [日本語](README_JP.md) | [한국어](README_KR.md) | [Polski](README_PL.md) | [Português (Brasil)](README_PT-BR.md) | [Türkçe](README_TR.md) | [Русский](README_RU.md) | [Tiếng Việt](README_VI.md) | [Indonesia](README_ID.md) | [עברית](README_IW.md) | [हिंदी](README_IN.md) | [Italiano](README_IT.md)
 
