@@ -1,0 +1,77 @@
+name: Promote xxKSU
+
+# The staging branch gets the newest xxKSU every day as a pre-release. The A32
+# kernel builds the newest xxKSU release; when that works, this moves the
+# stable branch (sync-mojito) to that commit and makes it the Latest release.
+# When the A32 build had to fall back to the last good xxKSU, an issue is opened.
+
+on:
+  schedule:
+    - cron: '30 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Promote this xxKSU release by hand (no A32 check). Empty = check the A32 builds'
+        type: string
+        default: ''
+      dry_run:
+        description: 'Only show what would happen'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: promote-xxksu
+  cancel-in-progress: false
+
+env:
+  STABLE: ${{ vars.XXKSU_STABLE_BRANCH || 'sync-mojito' }}
+  KERNEL_REPO: ${{ vars.A32_KERNEL_REPO || 'Najip/KernelSU_SUSFS_Samsung_SM-A325X' }}
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts/promote_xxksu.py
+          sparse-checkout-cone-mode: false
+
+      - name: Check the A32 builds and promote
+        id: promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          XXKSU_PUSH_TOKEN: ${{ secrets.XXKSU_PUSH_TOKEN }}
+        run: |
+          flags=()
+          [[ -n "${{ inputs.tag }}" ]] && flags+=(--tag "${{ inputs.tag }}")
+          [[ "${{ inputs.dry_run }}" == "true" ]] && flags+=(--dry-run)
+          python3 .github/scripts/promote_xxksu.py "${flags[@]}"
+
+      - name: Summary
+        run: |
+          {
+            if [[ -n "${{ steps.promote.outputs.promoted }}" ]]; then
+              echo "Promoted **${{ steps.promote.outputs.promoted }}** to \`$STABLE\` (built on the A32: ${{ steps.promote.outputs.kernel_release }})."
+            else
+              echo "Nothing to promote."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open an issue for xxKSU that failed on the A32
+        if: steps.promote.outputs.failed != '[]' && steps.promote.outputs.failed != '' && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED: ${{ steps.promote.outputs.failed }}
+        run: |
+          jq -c '.[]' <<<"$FAILED" | while read -r f; do
+            tag=$(jq -r .tag <<<"$f")
+            title="xxKSU $tag failed to build on the A32"
+            n=$(gh issue list --state all --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+            [[ -z "$n" ]] || continue
+            gh issue create --title "$title" --body "$(jq -r '"The A32 kernel build could not use [\(.tag)](https://github.com/'"$GITHUB_REPOSITORY"'/releases/tag/\(.tag)) (`\(.commit[:12])`) and fell back to the last good xxKSU: [\(.kernel_tag)](\(.kernel)).\n\nThe stable branch stays where it is. A later xxKSU that builds is promoted as usual."' <<<"$f")"
+          done

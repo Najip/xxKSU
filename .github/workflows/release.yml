@@ -25,6 +25,11 @@ on:
         required: false
         type: string
         default: ""
+      prerelease:
+        description: "Pre-release (newest xxKSU, not yet built on the A32). Promote xxKSU makes it the Latest release"
+        required: false
+        type: boolean
+        default: false
       dispatch_kernel:
         description: "Afterwards start the A32 kernel pre-release build (needs KERNEL_DISPATCH_TOKEN)"
         required: false
@@ -110,6 +115,8 @@ jobs:
           name: ${{ steps.meta.outputs.tag }}
           body: ${{ inputs.release_notes }}
           generate_release_notes: true
+          prerelease: ${{ inputs.prerelease == true }}
+          make_latest: ${{ inputs.prerelease != true }}
           files: |
             manager/*.apk
             lkm/lkm-*_kernelsu.ko
