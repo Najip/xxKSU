@@ -128,7 +128,9 @@ jobs:
     if: inputs.dispatch_kernel
     runs-on: ubuntu-latest
     steps:
-      - name: Start the A32 kernel pre-release build (when KERNEL_DISPATCH_TOKEN is set)
+      # The kernel repo's upstream check sees the new xxKSU release and builds
+      # only the xxKSU kernel (as a pre-release), reusing the BakaSU one.
+      - name: Start the A32 kernel upstream check (when KERNEL_DISPATCH_TOKEN is set)
         env:
           GH_TOKEN: ${{ secrets.KERNEL_DISPATCH_TOKEN }}
         run: |
@@ -136,5 +138,4 @@ jobs:
             echo "KERNEL_DISPATCH_TOKEN not set; the kernel repo's upstream check picks this up."
             exit 0
           fi
-          gh workflow run kernel.yml --repo Najip/KernelSU_SUSFS_Samsung_SM-A325X --ref main \
-            -f root_flavor="Both (BakaSU + xxKSU)" -f commit_mode=Latest -f release_type=Pre-release
+          gh workflow run upstream-check.yml --repo Najip/KernelSU_SUSFS_Samsung_SM-A325X -f build=true
